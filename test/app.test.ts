@@ -1,7 +1,7 @@
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureSchema, getBotState, saveBotCredentials, upsertChatCandidate } from "../src/db";
-import { handleScheduled, type ScheduledDependencies } from "../src/index";
+import { handleScheduled, handleScheduledLoop, type ScheduledDependencies } from "../src/index";
 import { IlinkApiError } from "../src/ilink";
 import { setAllowedUserId } from "../src/config";
 
@@ -85,6 +85,7 @@ describe("scheduled conversation processing", () => {
     await setAllowedUserId(env, "user-a");
 
     const sent: Array<{ user: string; text: string; context: string }> = [];
+    const events: string[] = [];
     const client = {
       getUpdates: vi.fn(async () => ({
         buffer: "new",
@@ -93,7 +94,7 @@ describe("scheduled conversation processing", () => {
           { message_type: 1, from_user_id: "user-b", context_token: "ctx-b", item_list: [{ type: 1, text_item: { text: "B question" } }] }
         ]
       })),
-      sendTyping: vi.fn(async () => undefined),
+      sendTyping: vi.fn(async (_token: string, user: string) => { events.push(`typing:${user}`); }),
       sendTextMessage: vi.fn(async (_token: string, user: string, text: string, context: string) => {
         sent.push({ user, text, context });
       })
@@ -102,6 +103,7 @@ describe("scheduled conversation processing", () => {
     const dependencies: ScheduledDependencies = {
       createClient: () => client,
       generateReply: vi.fn(async (_runtimeEnv, history, text) => {
+        events.push(`ai:${text}`);
         seenHistories.push({ text, size: history.length });
         return `reply:${text}`;
       })
@@ -113,6 +115,7 @@ describe("scheduled conversation processing", () => {
       { user: "user-a", text: "reply:A question", context: "ctx-a" }
     ]);
     expect(seenHistories).toEqual([{ text: "A question", size: 0 }]);
+    expect(events).toEqual(["typing:user-a", "ai:A question"]);
     const counts = await env.DB.prepare(
       "SELECT from_user_id, COUNT(*) AS count FROM conversations GROUP BY from_user_id ORDER BY from_user_id"
     ).all<{ from_user_id: string; count: number }>();
@@ -150,5 +153,38 @@ describe("scheduled conversation processing", () => {
 
     await handleScheduled(env, dependencies);
     expect((await getBotState(env.DB, env.BOT_STATE_ENC_KEY)).isLoggedIn).toBe(false);
+  });
+
+  it("loops long polling within the 50 second safety window", async () => {
+    await saveBotCredentials(env.DB, env.BOT_STATE_ENC_KEY, {
+      botToken: "token",
+      accountId: "account",
+      userId: "bot-user",
+      baseUrl: "https://ilink.test",
+      getUpdatesBuf: ""
+    });
+    const timeouts: number[] = [];
+    const dependencies: ScheduledDependencies = {
+      createClient: () => ({
+        getUpdates: async (_token, buffer, timeoutMs = 0) => {
+          timeouts.push(timeoutMs);
+          vi.setSystemTime(Date.now() + timeoutMs);
+          return { buffer, messages: [] };
+        },
+        sendTyping: async () => undefined,
+        sendTextMessage: async () => undefined
+      }),
+      generateReply: async () => "unused"
+    };
+
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      await handleScheduledLoop(env, dependencies);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(timeouts).toEqual([35_000, 19_500]);
   });
 });

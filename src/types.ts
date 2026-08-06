@@ -6,7 +6,7 @@ export interface ChatMessage {
 }
 
 export interface WorkersAiBinding {
-  run(model: string, input: { messages: ChatMessage[] }): Promise<unknown>;
+  run(model: string, input: { messages: ChatMessage[]; temperature?: number; max_tokens?: number }): Promise<unknown>;
 }
 
 export interface Env {

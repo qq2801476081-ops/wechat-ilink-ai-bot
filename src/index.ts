@@ -42,6 +42,17 @@ const renderQrDataUrl = async (content: string): Promise<string> => {
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
+export const ERROR_REPLIES = [
+  "哎呀脑子卡壳了😵 等我缓一下",
+  "网有点卡，消息没发出去🤦",
+  "刚才走神了，你再说一遍？",
+  "服务器打瞌睡了💤 稍等哈",
+  "哈？你说啥？我没听清😅"
+] as const;
+
+export const getErrorReply = (): string =>
+  ERROR_REPLIES[Math.floor(Math.random() * ERROR_REPLIES.length)] ?? ERROR_REPLIES[0];
+
 export const createApp = (): Hono<{ Bindings: Env }> => {
   const app = new Hono<{ Bindings: Env }>();
 
@@ -152,7 +163,7 @@ export const createApp = (): Hono<{ Bindings: Env }> => {
 };
 
 interface ScheduledClient {
-  getUpdates(token: string, buffer: string): Promise<{ buffer: string; messages: import("./ilink").IlinkMessage[] }>;
+  getUpdates(token: string, buffer: string, timeoutMs?: number): Promise<{ buffer: string; messages: import("./ilink").IlinkMessage[] }>;
   sendTyping(token: string, userId: string, contextToken: string): Promise<void>;
   sendTextMessage(token: string, toUserId: string, text: string, contextToken: string): Promise<void>;
 }
@@ -173,17 +184,18 @@ const defaultScheduledDependencies: ScheduledDependencies = {
 
 export const handleScheduled = async (
   env: Env,
-  dependencies: ScheduledDependencies = defaultScheduledDependencies
-): Promise<void> => {
+  dependencies: ScheduledDependencies = defaultScheduledDependencies,
+  pollTimeoutMs = 35_000
+): Promise<{ polled: boolean; hasMessages: boolean }> => {
   await ensureSchema(env.DB);
   const state = await getBotState(env.DB, env.BOT_STATE_ENC_KEY);
-  if (!state.isLoggedIn || !state.credentials) return;
+  if (!state.isLoggedIn || !state.credentials) return { polled: false, hasMessages: false };
 
   const credentials = { ...state.credentials };
   const client = dependencies.createClient(credentials.baseUrl || env.ILINK_BASE_URL || "https://ilinkai.weixin.qq.com");
 
   try {
-    const updates = await client.getUpdates(credentials.botToken, credentials.getUpdatesBuf);
+    const updates = await client.getUpdates(credentials.botToken, credentials.getUpdatesBuf, pollTimeoutMs);
     credentials.getUpdatesBuf = updates.buffer;
     await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
     const allowedUserId = await getAllowedUserId(env);
@@ -195,16 +207,19 @@ export const handleScheduled = async (
       const text = extractText(message).trim();
       if (!fromUserId || !contextToken || !text) continue;
 
-      await upsertChatCandidate(env.DB, fromUserId, text);
-      if (!allowedUserId || fromUserId !== allowedUserId) continue;
-
-      credentials.latestContextToken = contextToken;
-      try {
-        await client.sendTyping(credentials.botToken, fromUserId, contextToken);
-      } catch (error) {
-        if (error instanceof IlinkApiError && error.requiresLogin) throw error;
-        console.warn("[scheduled] sendtyping failed", errorMessage(error));
+      const isAllowedUser = Boolean(allowedUserId && fromUserId === allowedUserId);
+      if (isAllowedUser) {
+        credentials.latestContextToken = contextToken;
+        try {
+          await client.sendTyping(credentials.botToken, fromUserId, contextToken);
+        } catch (error) {
+          if (error instanceof IlinkApiError && error.requiresLogin) throw error;
+          console.warn("[scheduled] sendtyping failed", errorMessage(error));
+        }
       }
+
+      await upsertChatCandidate(env.DB, fromUserId, text);
+      if (!isAllowedUser) continue;
 
       const history = await getConversationHistory(env.DB, fromUserId, 20);
       let reply: string;
@@ -212,7 +227,7 @@ export const handleScheduled = async (
         reply = await dependencies.generateReply(env, history.map(({ role, content }) => ({ role, content })), text);
       } catch (error) {
         console.error("[scheduled] AI call failed", errorMessage(error));
-        reply = "抱歉，AI 暂时无法回复，请稍后再试。";
+        reply = getErrorReply();
       }
 
       await addConversationMessage(env.DB, fromUserId, "user", text);
@@ -221,14 +236,42 @@ export const handleScheduled = async (
     }
 
     await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
+    return { polled: true, hasMessages: updates.messages.length > 0 };
   } catch (error) {
     const message = errorMessage(error);
     if (error instanceof IlinkApiError && error.requiresLogin) {
       await markBotLoggedOut(env.DB, message);
-      return;
+      return { polled: false, hasMessages: false };
     }
     await setBotError(env.DB, message);
     throw error;
+  }
+};
+
+const MAX_SCHEDULED_DURATION_MS = 55_000;
+const MAX_LONG_POLL_MS = 35_000;
+const LOOP_SAFETY_MARGIN_MS = 500;
+
+export const handleScheduledLoop = async (
+  env: Env,
+  dependencies: ScheduledDependencies = defaultScheduledDependencies
+): Promise<void> => {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < MAX_SCHEDULED_DURATION_MS) {
+    const remaining = MAX_SCHEDULED_DURATION_MS - (Date.now() - startedAt);
+    const pollTimeoutMs = Math.min(MAX_LONG_POLL_MS, remaining - LOOP_SAFETY_MARGIN_MS);
+    if (pollTimeoutMs <= 0) break;
+
+    try {
+      const result = await handleScheduled(env, dependencies, pollTimeoutMs);
+      if (!result.polled) break;
+    } catch (error) {
+      console.error("Poll error:", error);
+      const retryDelay = Math.min(3_000, MAX_SCHEDULED_DURATION_MS - (Date.now() - startedAt));
+      if (retryDelay <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, retryDelay));
+    }
   }
 };
 
@@ -236,7 +279,7 @@ const app = createApp();
 
 export default {
   fetch: app.fetch,
-  async scheduled(_controller, env): Promise<void> {
-    await handleScheduled(env);
+  scheduled(_controller, env, ctx): void {
+    ctx.waitUntil(handleScheduledLoop(env));
   }
 } satisfies ExportedHandler<Env>;

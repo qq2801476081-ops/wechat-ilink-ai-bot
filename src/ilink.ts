@@ -104,7 +104,7 @@ export class IlinkClient {
     };
   }
 
-  public async getUpdates(token: string, buffer: string): Promise<{
+  public async getUpdates(token: string, buffer: string, timeoutMs = 35_000): Promise<{
     buffer: string;
     messages: IlinkMessage[];
   }> {
@@ -115,7 +115,7 @@ export class IlinkClient {
       }>("POST", "/ilink/bot/getupdates", token, {
         get_updates_buf: buffer,
         base_info: { channel_version: CHANNEL_VERSION }
-      }, 40_000);
+      }, timeoutMs);
       this.assertSuccess(response);
       return { buffer: response.get_updates_buf ?? buffer, messages: response.msgs ?? [] };
     } catch (error) {
