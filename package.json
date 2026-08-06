@@ -18,7 +18,6 @@
     "@cloudflare/vitest-pool-workers": "0.20.2",
     "@cloudflare/workers-types": "5.20260804.1",
     "@types/qrcode": "^1.5.5",
-    "playwright-core": "^1.62.1",
     "typescript": "^5.9.2",
     "vitest": "4.1.0",
     "wrangler": "4.119.0"

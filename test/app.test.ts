@@ -155,7 +155,7 @@ describe("scheduled conversation processing", () => {
     expect((await getBotState(env.DB, env.BOT_STATE_ENC_KEY)).isLoggedIn).toBe(false);
   });
 
-  it("loops long polling within the 50 second safety window", async () => {
+  it("loops long polling within the 55 second safety window", async () => {
     await saveBotCredentials(env.DB, env.BOT_STATE_ENC_KEY, {
       botToken: "token",
       accountId: "account",

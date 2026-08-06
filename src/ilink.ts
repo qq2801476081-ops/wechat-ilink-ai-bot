@@ -1,7 +1,7 @@
 const DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com";
 const CHANNEL_VERSION = "1.0.3";
 
-export interface IlinkMessageItem {
+interface IlinkMessageItem {
   type?: number;
   text_item?: { text?: string };
   ref_msg?: { title?: string; message_item?: IlinkMessageItem };
@@ -116,7 +116,6 @@ export class IlinkClient {
         get_updates_buf: buffer,
         base_info: { channel_version: CHANNEL_VERSION }
       }, timeoutMs);
-      this.assertSuccess(response);
       return { buffer: response.get_updates_buf ?? buffer, messages: response.msgs ?? [] };
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
@@ -132,7 +131,7 @@ export class IlinkClient {
     text: string,
     contextToken: string
   ): Promise<void> {
-    const response = await this.request<IlinkBaseResponse>("POST", "/ilink/bot/sendmessage", token, {
+    await this.request<IlinkBaseResponse>("POST", "/ilink/bot/sendmessage", token, {
       msg: {
         from_user_id: "",
         to_user_id: toUserId,
@@ -144,7 +143,6 @@ export class IlinkClient {
       },
       base_info: { channel_version: CHANNEL_VERSION }
     });
-    this.assertSuccess(response);
   }
 
   public async sendTyping(token: string, userId: string, contextToken: string): Promise<void> {
@@ -158,16 +156,14 @@ export class IlinkClient {
         base_info: { channel_version: CHANNEL_VERSION }
       }
     );
-    this.assertSuccess(config);
     if (!config.typing_ticket) throw new IlinkApiError("iLink did not return a typing ticket");
 
-    const response = await this.request<IlinkBaseResponse>("POST", "/ilink/bot/sendtyping", token, {
+    await this.request<IlinkBaseResponse>("POST", "/ilink/bot/sendtyping", token, {
       ilink_user_id: userId,
       typing_ticket: config.typing_ticket,
       status: 1,
       base_info: { channel_version: CHANNEL_VERSION }
     });
-    this.assertSuccess(response);
   }
 
   private async request<T extends object>(
@@ -198,6 +194,7 @@ export class IlinkClient {
       if (!response.ok) {
         throw new IlinkApiError(extractErrorMessage(parsed), response.status, parsed.ret, parsed.errcode);
       }
+      this.assertSuccess(parsed);
       return parsed;
     } finally {
       clearTimeout(timer);

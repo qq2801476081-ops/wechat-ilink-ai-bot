@@ -2,15 +2,15 @@ import { decryptText, encryptText } from "./crypto";
 import { deleteConfigValue, getConfigValue, setConfigValue } from "./db";
 import type { AiProvider, Env, RuntimeConfig } from "./types";
 
-export const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
-export const DEFAULT_PROVIDER: AiProvider = "workers-ai";
+const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
+const DEFAULT_PROVIDER: AiProvider = "workers-ai";
 
 const PROVIDERS = new Set<AiProvider>(["workers-ai", "deepseek", "openai"]);
 const SECRET_CONFIG_KEYS = new Set(["deepseek_api_key", "openai_api_key"]);
 const CONFIG_KEYS = new Set(["ai_provider", "ai_model", ...SECRET_CONFIG_KEYS]);
 
-export const isConfigKey = (key: string): boolean => CONFIG_KEYS.has(key);
-export const isSecretConfigKey = (key: string): boolean => SECRET_CONFIG_KEYS.has(key);
+const isConfigKey = (key: string): boolean => CONFIG_KEYS.has(key);
+const isSecretConfigKey = (key: string): boolean => SECRET_CONFIG_KEYS.has(key);
 
 export const saveDynamicConfig = async (env: Env, key: string, value: string): Promise<void> => {
   if (!isConfigKey(key)) throw new Error("Unsupported config key");
@@ -39,25 +39,31 @@ const getStoredSecret = async (env: Env, key: string): Promise<string | undefine
 };
 
 export const getPublicConfig = async (env: Env): Promise<Record<string, string | boolean>> => {
-  const provider = (await getConfigValue(env.DB, "ai_provider")) ?? DEFAULT_PROVIDER;
-  const model = (await getConfigValue(env.DB, "ai_model")) ?? DEFAULT_MODEL;
-  const storedDeepSeek = await getConfigValue(env.DB, "deepseek_api_key");
-  const storedOpenAi = await getConfigValue(env.DB, "openai_api_key");
+  const [storedProvider, storedModel, storedDeepSeek, storedOpenAi] = await Promise.all([
+    getConfigValue(env.DB, "ai_provider"),
+    getConfigValue(env.DB, "ai_model"),
+    getConfigValue(env.DB, "deepseek_api_key"),
+    getConfigValue(env.DB, "openai_api_key")
+  ]);
 
   return {
-    ai_provider: provider,
-    ai_model: model,
+    ai_provider: storedProvider ?? DEFAULT_PROVIDER,
+    ai_model: storedModel ?? DEFAULT_MODEL,
     deepseek_api_key_configured: Boolean(env.DEEPSEEK_API_KEY || storedDeepSeek),
     openai_api_key_configured: Boolean(env.OPENAI_API_KEY || storedOpenAi)
   };
 };
 
 export const getRuntimeConfig = async (env: Env): Promise<RuntimeConfig> => {
-  const rawProvider = (await getConfigValue(env.DB, "ai_provider")) ?? DEFAULT_PROVIDER;
+  const [storedProvider, storedModel] = await Promise.all([
+    getConfigValue(env.DB, "ai_provider"),
+    getConfigValue(env.DB, "ai_model")
+  ]);
+  const rawProvider = storedProvider ?? DEFAULT_PROVIDER;
   const aiProvider = PROVIDERS.has(rawProvider as AiProvider)
     ? rawProvider as AiProvider
     : DEFAULT_PROVIDER;
-  const aiModel = (await getConfigValue(env.DB, "ai_model")) ?? DEFAULT_MODEL;
+  const aiModel = storedModel ?? DEFAULT_MODEL;
 
   if (aiProvider === "deepseek") {
     return {

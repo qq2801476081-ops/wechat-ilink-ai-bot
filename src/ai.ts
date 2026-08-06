@@ -36,7 +36,7 @@ const callOpenAiCompatible = async (
   messages: ChatMessage[],
   fetchImpl: typeof fetch
 ): Promise<string> => {
-  const response = await fetchImpl(endpoint, {
+  const response = await fetchImpl.call(globalThis, endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -93,5 +93,3 @@ export const generateAiReply = async (
     : "https://api.openai.com/v1/chat/completions";
   return callOpenAiCompatible(endpoint, config.apiKey, config.aiModel, messages, fetchImpl);
 };
-
-export { AI_MAX_TOKENS, AI_TEMPERATURE, SYSTEM_PROMPT };

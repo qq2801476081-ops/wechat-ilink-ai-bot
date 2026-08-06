@@ -6,7 +6,7 @@ import {
   addConversationMessage,
   ensureSchema,
   getBotState,
-  getChatCandidate,
+  getChatCandidateUserId,
   getConversationHistory,
   getLoginQr,
   listChatCandidates,
@@ -42,7 +42,7 @@ const renderQrDataUrl = async (content: string): Promise<string> => {
 
 const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
-export const ERROR_REPLIES = [
+const ERROR_REPLIES = [
   "哎呀脑子卡壳了😵 等我缓一下",
   "网有点卡，消息没发出去🤦",
   "刚才走神了，你再说一遍？",
@@ -50,10 +50,10 @@ export const ERROR_REPLIES = [
   "哈？你说啥？我没听清😅"
 ] as const;
 
-export const getErrorReply = (): string =>
+const getErrorReply = (): string =>
   ERROR_REPLIES[Math.floor(Math.random() * ERROR_REPLIES.length)] ?? ERROR_REPLIES[0];
 
-export const createApp = (): Hono<{ Bindings: Env }> => {
+const createApp = (): Hono<{ Bindings: Env }> => {
   const app = new Hono<{ Bindings: Env }>();
 
   app.use("*", async (c, next) => {
@@ -118,10 +118,11 @@ export const createApp = (): Hono<{ Bindings: Env }> => {
     if (!Number.isInteger(input.candidateId) || Number(input.candidateId) <= 0) {
       return c.json({ error: "invalid_candidate", message: "请选择有效的候选好友" }, 400);
     }
-    const candidate = await getChatCandidate(c.env.DB, Number(input.candidateId));
-    if (!candidate) return c.json({ error: "candidate_not_found", message: "候选好友不存在，请刷新列表" }, 404);
-    await setAllowedUserId(c.env, candidate.fromUserId);
-    return c.json({ ok: true, selectedCandidateId: candidate.id });
+    const candidateId = Number(input.candidateId);
+    const candidateUserId = await getChatCandidateUserId(c.env.DB, candidateId);
+    if (!candidateUserId) return c.json({ error: "candidate_not_found", message: "候选好友不存在，请刷新列表" }, 404);
+    await setAllowedUserId(c.env, candidateUserId);
+    return c.json({ ok: true, selectedCandidateId: candidateId });
   });
 
   app.get("/api/login/qr", async (c) => {
@@ -199,6 +200,7 @@ export const handleScheduled = async (
     credentials.getUpdatesBuf = updates.buffer;
     await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
     const allowedUserId = await getAllowedUserId(env);
+    let contextTokenChanged = false;
 
     for (const message of updates.messages) {
       if (message.message_type !== undefined && message.message_type !== 1) continue;
@@ -209,7 +211,10 @@ export const handleScheduled = async (
 
       const isAllowedUser = Boolean(allowedUserId && fromUserId === allowedUserId);
       if (isAllowedUser) {
-        credentials.latestContextToken = contextToken;
+        if (credentials.latestContextToken !== contextToken) {
+          credentials.latestContextToken = contextToken;
+          contextTokenChanged = true;
+        }
         try {
           await client.sendTyping(credentials.botToken, fromUserId, contextToken);
         } catch (error) {
@@ -235,7 +240,9 @@ export const handleScheduled = async (
       await client.sendTextMessage(credentials.botToken, fromUserId, reply, contextToken);
     }
 
-    await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
+    if (contextTokenChanged) {
+      await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
+    }
     return { polled: true, hasMessages: updates.messages.length > 0 };
   } catch (error) {
     const message = errorMessage(error);

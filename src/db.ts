@@ -41,8 +41,17 @@ const SCHEMA = [
     ON chat_candidates(last_seen_at DESC, id DESC)`
 ];
 
+let schemaInitialization: Promise<void> | undefined;
+
 export const ensureSchema = async (db: D1Database): Promise<void> => {
-  await db.batch(SCHEMA.map((statement) => db.prepare(statement)));
+  schemaInitialization ??= db.batch(SCHEMA.map((statement) => db.prepare(statement)))
+    .then(() => undefined);
+  try {
+    await schemaInitialization;
+  } catch (error) {
+    schemaInitialization = undefined;
+    throw error;
+  }
 };
 
 interface BotStateRow {
@@ -121,10 +130,15 @@ export const setBotError = async (db: D1Database, error: string): Promise<void> 
   ).bind(error).run();
 };
 
-export interface LoginQrRecord {
+interface LoginQrRecord {
   key: string;
   image: string;
   status: "pending" | "scanned" | "confirmed" | "expired";
+}
+
+interface LoginQrStatusRecord {
+  key: string;
+  status: LoginQrRecord["status"];
 }
 
 export const saveLoginQr = async (db: D1Database, record: LoginQrRecord): Promise<void> => {
@@ -137,12 +151,12 @@ export const saveLoginQr = async (db: D1Database, record: LoginQrRecord): Promis
   ).bind(record.key, record.image, record.status).run();
 };
 
-export const getLoginQr = async (db: D1Database): Promise<LoginQrRecord | null> => {
+export const getLoginQr = async (db: D1Database): Promise<LoginQrStatusRecord | null> => {
   const row = await db.prepare(
-    `SELECT qrcode_key, qrcode_img, status FROM login_qr WHERE id = 1`
-  ).first<{ qrcode_key: string | null; qrcode_img: string | null; status: LoginQrRecord["status"] }>();
-  if (!row?.qrcode_key || !row.qrcode_img) return null;
-  return { key: row.qrcode_key, image: row.qrcode_img, status: row.status };
+    `SELECT qrcode_key, status FROM login_qr WHERE id = 1`
+  ).first<{ qrcode_key: string | null; status: LoginQrRecord["status"] }>();
+  if (!row?.qrcode_key) return null;
+  return { key: row.qrcode_key, status: row.status };
 };
 
 export const updateLoginQrStatus = async (db: D1Database, status: LoginQrRecord["status"]): Promise<void> => {
@@ -195,7 +209,7 @@ export const addConversationMessage = async (
   ).bind(fromUserId, role, content).run();
 };
 
-export interface ChatCandidate {
+interface ChatCandidate {
   id: number;
   fromUserId: string;
   lastMessagePreview: string;
@@ -231,15 +245,9 @@ export const listChatCandidates = async (db: D1Database): Promise<ChatCandidate[
   }));
 };
 
-export const getChatCandidate = async (db: D1Database, id: number): Promise<ChatCandidate | null> => {
+export const getChatCandidateUserId = async (db: D1Database, id: number): Promise<string | null> => {
   const row = await db.prepare(
-    `SELECT id, from_user_id, last_message_preview, last_seen_at
-     FROM chat_candidates WHERE id = ?`
-  ).bind(id).first<{ id: number; from_user_id: string; last_message_preview: string; last_seen_at: string }>();
-  return row ? {
-    id: row.id,
-    fromUserId: row.from_user_id,
-    lastMessagePreview: row.last_message_preview,
-    lastSeenAt: row.last_seen_at
-  } : null;
+    `SELECT from_user_id FROM chat_candidates WHERE id = ?`
+  ).bind(id).first<{ from_user_id: string }>();
+  return row?.from_user_id ?? null;
 };
