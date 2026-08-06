@@ -30,7 +30,15 @@ const SCHEMA = [
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`
+  )`,
+  `CREATE TABLE IF NOT EXISTS chat_candidates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_user_id TEXT NOT NULL UNIQUE,
+    last_message_preview TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_candidates_seen
+    ON chat_candidates(last_seen_at DESC, id DESC)`
 ];
 
 export const ensureSchema = async (db: D1Database): Promise<void> => {
@@ -185,4 +193,53 @@ export const addConversationMessage = async (
   await db.prepare(
     `INSERT INTO conversations (from_user_id, role, content) VALUES (?, ?, ?)`
   ).bind(fromUserId, role, content).run();
+};
+
+export interface ChatCandidate {
+  id: number;
+  fromUserId: string;
+  lastMessagePreview: string;
+  lastSeenAt: string;
+}
+
+export const upsertChatCandidate = async (
+  db: D1Database,
+  fromUserId: string,
+  message: string
+): Promise<void> => {
+  const preview = message.replace(/\s+/g, " ").trim().slice(0, 80);
+  await db.prepare(
+    `INSERT INTO chat_candidates (from_user_id, last_message_preview, last_seen_at)
+     VALUES (?, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(from_user_id) DO UPDATE SET
+       last_message_preview = excluded.last_message_preview,
+       last_seen_at = CURRENT_TIMESTAMP`
+  ).bind(fromUserId, preview).run();
+};
+
+export const listChatCandidates = async (db: D1Database): Promise<ChatCandidate[]> => {
+  const result = await db.prepare(
+    `SELECT id, from_user_id, last_message_preview, last_seen_at
+     FROM chat_candidates ORDER BY last_seen_at DESC, id DESC LIMIT 50`
+  ).all<{ id: number; from_user_id: string; last_message_preview: string; last_seen_at: string }>();
+
+  return (result.results ?? []).map((row) => ({
+    id: row.id,
+    fromUserId: row.from_user_id,
+    lastMessagePreview: row.last_message_preview,
+    lastSeenAt: row.last_seen_at
+  }));
+};
+
+export const getChatCandidate = async (db: D1Database, id: number): Promise<ChatCandidate | null> => {
+  const row = await db.prepare(
+    `SELECT id, from_user_id, last_message_preview, last_seen_at
+     FROM chat_candidates WHERE id = ?`
+  ).bind(id).first<{ id: number; from_user_id: string; last_message_preview: string; last_seen_at: string }>();
+  return row ? {
+    id: row.id,
+    fromUserId: row.from_user_id,
+    lastMessagePreview: row.last_message_preview,
+    lastSeenAt: row.last_seen_at
+  } : null;
 };

@@ -77,3 +77,18 @@ export const getRuntimeConfig = async (env: Env): Promise<RuntimeConfig> => {
 
   return { aiProvider, aiModel };
 };
+
+const ALLOWED_USER_KEY = "allowed_user_id";
+
+export const getAllowedUserId = async (env: Env): Promise<string | null> => {
+  const encrypted = await getConfigValue(env.DB, ALLOWED_USER_KEY);
+  return encrypted ? await decryptText(env.BOT_STATE_ENC_KEY, encrypted) : null;
+};
+
+export const setAllowedUserId = async (env: Env, userId: string | null): Promise<void> => {
+  if (!userId) {
+    await deleteConfigValue(env.DB, ALLOWED_USER_KEY);
+    return;
+  }
+  await setConfigValue(env.DB, ALLOWED_USER_KEY, await encryptText(env.BOT_STATE_ENC_KEY, userId));
+};

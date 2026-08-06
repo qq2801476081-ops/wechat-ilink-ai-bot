@@ -16,6 +16,7 @@ export const renderSetupPage = (): string => `<!doctype html>
     button{border:0;border-radius:8px;background:var(--green);color:#fff;padding:10px 16px;font:600 14px inherit;cursor:pointer}button:hover{background:var(--green2)}button:disabled{opacity:.55;cursor:wait}.secondary{background:#fff;color:var(--green);border:1px solid var(--green)}
     .actions{display:flex;align-items:center;gap:12px;margin-top:15px}.message{font-size:13px;color:var(--muted)}.message.error{color:var(--danger)}
     .qrbox{display:none;margin-top:18px;padding:18px;border:1px dashed #b9c7bd;border-radius:10px;text-align:center;background:#fbfcfb}.qrbox.show{display:block}.qrbox img{display:block;width:min(280px,100%);height:auto;margin:0 auto 12px;background:#fff}.complete{display:none}.complete.show{display:block}.complete strong{color:var(--green)}
+    .candidates{display:grid;gap:10px;margin-top:16px}.candidate{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfb}.candidate.selected{border-color:var(--green);background:var(--soft)}.candidate-main{min-width:0}.candidate-preview{font-weight:600;word-break:break-word}.candidate-time{font-size:12px;color:var(--muted);margin-top:3px}.candidate button{flex:0 0 auto}
     @media(max-width:620px){.shell{margin-top:20px}.hero{display:block}.status-pill{display:inline-block;margin-top:10px}.step{grid-template-columns:38px 1fr;padding:20px 16px}.grid{grid-template-columns:1fr}.field.full{grid-column:auto}.providers{display:grid}.actions{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
@@ -42,6 +43,11 @@ export const renderSetupPage = (): string => `<!doctype html>
         <div id="qrBox" class="qrbox"><img id="qrImage" alt="微信登录二维码"><div id="qrStatus">等待扫码…</div></div>
       </div></div>
       <div class="step"><div class="num">3</div><div class="content">
+        <h2>选择对话好友</h2><p class="hint">让目标好友先给 Bot 发送一条容易辨认的消息，然后刷新列表并选择。绑定后，其他好友的消息不会触发 AI，也不会保存为对话记录。</p>
+        <div class="actions"><button id="refreshCandidates" class="secondary">刷新候选好友</button><button id="clearBinding" class="secondary">取消当前绑定</button><span id="bindingMessage" class="message"></span></div>
+        <div id="candidateList" class="candidates"><p class="hint">正在读取候选好友…</p></div>
+      </div></div>
+      <div class="step"><div class="num">4</div><div class="content">
         <h2>完成</h2><div id="complete" class="complete"><p><strong>登录成功，机器人已经上线。</strong></p><img id="botQr" alt="机器人二维码" style="width:min(220px,100%);background:#fff"><p class="hint">用自己的微信添加该 Bot 后即可聊天。超过 24 小时未聊天时，如会话失效，请返回本页重新扫码。</p></div><p id="waiting" class="hint">完成 AI 配置并扫码登录后，机器人将随每分钟定时任务开始接收消息。</p>
       </div></div>
     </section>
@@ -107,9 +113,35 @@ export const renderSetupPage = (): string => `<!doctype html>
         clearInterval(qrTimer); qrTimer = setInterval(pollQr, 3000);
       } catch (error) { setMessage($("loginMessage"), error.message, true); } finally { button.disabled = false; }
     }
+    async function bindCandidate(candidateId) {
+      try {
+        await api("/api/chat-binding", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({candidateId}) });
+        setMessage($("bindingMessage"), candidateId === null ? "已取消绑定，Bot 暂时不会回复任何好友" : "已绑定目标好友");
+        await loadChatBinding();
+      } catch (error) { setMessage($("bindingMessage"), error.message, true); }
+    }
+    async function loadChatBinding() {
+      const list = $("candidateList");
+      try {
+        const data = await api("/api/chat-binding");
+        list.replaceChildren();
+        if (!data.candidates.length) {
+          const empty = document.createElement("p"); empty.className = "hint"; empty.textContent = "还没有候选好友。请让目标好友发一条消息，等待约 1 分钟后刷新。"; list.appendChild(empty); return;
+        }
+        for (const candidate of data.candidates) {
+          const row = document.createElement("div"); row.className = "candidate" + (candidate.id === data.selectedCandidateId ? " selected" : "");
+          const main = document.createElement("div"); main.className = "candidate-main";
+          const preview = document.createElement("div"); preview.className = "candidate-preview"; preview.textContent = "最近消息：" + (candidate.lastMessagePreview || "（空消息）");
+          const time = document.createElement("div"); time.className = "candidate-time"; time.textContent = "最后收到：" + candidate.lastSeenAt;
+          const button = document.createElement("button"); button.textContent = candidate.id === data.selectedCandidateId ? "已选择" : "选择此好友"; button.disabled = candidate.id === data.selectedCandidateId; button.addEventListener("click", () => bindCandidate(candidate.id));
+          main.append(preview, time); row.append(main, button); list.appendChild(row);
+        }
+      } catch (error) { list.replaceChildren(); setMessage($("bindingMessage"), error.message, true); }
+    }
     document.querySelectorAll('input[name="provider"]').forEach((input) => input.addEventListener("change", syncProviderFields));
     $("saveConfig").addEventListener("click", saveConfig); $("getQr").addEventListener("click", getQr);
-    loadConfig(); fetch("/health").then((r)=>r.json()).then((data)=>{$("online").textContent=data.loggedIn?"Bot 已在线":"Bot 未登录";}).catch(()=>{$("online").textContent="状态读取失败";});
+    $("refreshCandidates").addEventListener("click", loadChatBinding); $("clearBinding").addEventListener("click", () => bindCandidate(null));
+    loadConfig(); loadChatBinding(); fetch("/health").then((r)=>r.json()).then((data)=>{$("online").textContent=data.loggedIn?"Bot 已在线":"Bot 未登录";}).catch(()=>{$("online").textContent="状态读取失败";});
   </script>
 </body>
 </html>`;

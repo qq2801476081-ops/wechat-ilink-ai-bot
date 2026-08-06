@@ -143,7 +143,10 @@ https://你的-worker域名/setup
 1. 选择 AI 提供商和模型并保存。
 2. 点击“获取登录二维码”。
 3. 使用专用微信小号扫码并在手机端确认。
-4. 登录成功后，用自己的微信添加该 Bot，开始聊天。
+4. 登录成功后，让希望绑定的好友给 Bot 发送一条容易辨认的消息。
+5. 等待约 1 分钟，在 `/setup` 的“选择对话好友”中刷新并选择该好友。
+
+绑定后只有选中的好友会触发 AI 回复；其他好友只会出现在候选列表中，不会调用 AI，也不会保存为对话记录。
 
 ## 部署后验证
 
@@ -152,7 +155,8 @@ https://你的-worker域名/setup
 1. **确认 Worker 在线**：访问 `https://你的-worker域名/health`，应返回 JSON 状态。
 2. **确认 Cron 触发**：Cloudflare Dashboard → Workers → 你的 Bot → Logs，应看到每分钟有 Cron 请求。
 3. **确认 Setup 页面**：访问 `/setup`，应能正常显示配置向导。
-4. **扫码登录后**：给自己的微信发一条消息，1 分钟内应收到 AI 回复。
+4. **扫码登录后**：让目标好友发一条消息，等待约 1 分钟，在 `/setup` 选择该候选好友。
+5. **确认回复**：让已选择的好友再发一条消息，1 分钟内应收到 AI 回复；其他好友不应收到回复。
 
 你的 Worker 域名会在部署完成后显示，也可以在 Dashboard → Workers → 你的 Bot 页面查看。
 
@@ -216,6 +220,8 @@ npm audit
 | GET | `/api/login/status?key=...` | 查询扫码状态 |
 | GET | `/api/config` | 获取脱敏配置 |
 | POST | `/api/config` | 保存 `{ "key": "...", "value": "..." }` |
+| GET | `/api/chat-binding` | 获取脱敏候选好友列表和当前选择 |
+| POST | `/api/chat-binding` | 选择候选好友，或用 `candidateId: null` 取消绑定 |
 | GET | `/health` | JSON 健康状态 |
 
 ## 重要说明
@@ -224,6 +230,8 @@ npm audit
 - 建议使用专用微信小号作为 Bot。不要同时在其他设备登录该账号。
 - 默认 Workers AI 不需要外部 API Key。选择 DeepSeek 或 OpenAI 时，部署者自行申请 Key 并承担对应费用。
 - iLink 回复必须使用收到消息时附带的 `context_token`，因此本项目只回复用户消息，不提供主动群发能力。
+- iLink 不提供完整好友通讯录读取接口。目标好友需要先发一条消息，随后才能在 `/setup` 的候选列表中选择。
+- 未选择目标好友时 Bot 不回复任何会话；选择后只回复该好友。
 - 超过 24 小时未聊天后如会话失效，请返回 `/setup` 重新扫码。
 - 免费额度和模型可用性以 Cloudflare、DeepSeek、OpenAI 的当前官方政策为准。
 

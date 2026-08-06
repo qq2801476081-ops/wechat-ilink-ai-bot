@@ -1,19 +1,22 @@
 import { Hono } from "hono";
 import * as QRCode from "qrcode";
 import { generateAiReply } from "./ai";
-import { getPublicConfig, saveDynamicConfig } from "./config";
+import { getAllowedUserId, getPublicConfig, saveDynamicConfig, setAllowedUserId } from "./config";
 import {
   addConversationMessage,
   ensureSchema,
   getBotState,
+  getChatCandidate,
   getConversationHistory,
   getLoginQr,
+  listChatCandidates,
   markBotLoggedOut,
   saveBotCredentials,
   saveLoginQr,
   setBotError,
   updateLoginQrStatus,
-  updatePollingState
+  updatePollingState,
+  upsertChatCandidate
 } from "./db";
 import { extractText, IlinkApiError, IlinkClient } from "./ilink";
 import { renderSetupPage } from "./setup.html.ts";
@@ -78,6 +81,36 @@ export const createApp = (): Hono<{ Bindings: Env }> => {
     } catch (error) {
       return c.json({ error: "invalid_config", message: errorMessage(error) }, 400);
     }
+  });
+
+  app.get("/api/chat-binding", async (c) => {
+    const [candidates, allowedUserId] = await Promise.all([
+      listChatCandidates(c.env.DB),
+      getAllowedUserId(c.env)
+    ]);
+    return c.json({
+      selectedCandidateId: candidates.find((candidate) => candidate.fromUserId === allowedUserId)?.id ?? null,
+      candidates: candidates.map((candidate) => ({
+        id: candidate.id,
+        lastMessagePreview: candidate.lastMessagePreview,
+        lastSeenAt: candidate.lastSeenAt
+      }))
+    });
+  });
+
+  app.post("/api/chat-binding", async (c) => {
+    const input = await c.req.json<{ candidateId?: unknown }>();
+    if (input.candidateId === null) {
+      await setAllowedUserId(c.env, null);
+      return c.json({ ok: true, selectedCandidateId: null });
+    }
+    if (!Number.isInteger(input.candidateId) || Number(input.candidateId) <= 0) {
+      return c.json({ error: "invalid_candidate", message: "请选择有效的候选好友" }, 400);
+    }
+    const candidate = await getChatCandidate(c.env.DB, Number(input.candidateId));
+    if (!candidate) return c.json({ error: "candidate_not_found", message: "候选好友不存在，请刷新列表" }, 404);
+    await setAllowedUserId(c.env, candidate.fromUserId);
+    return c.json({ ok: true, selectedCandidateId: candidate.id });
   });
 
   app.get("/api/login/qr", async (c) => {
@@ -153,6 +186,7 @@ export const handleScheduled = async (
     const updates = await client.getUpdates(credentials.botToken, credentials.getUpdatesBuf);
     credentials.getUpdatesBuf = updates.buffer;
     await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
+    const allowedUserId = await getAllowedUserId(env);
 
     for (const message of updates.messages) {
       if (message.message_type !== undefined && message.message_type !== 1) continue;
@@ -160,6 +194,9 @@ export const handleScheduled = async (
       const contextToken = message.context_token?.trim();
       const text = extractText(message).trim();
       if (!fromUserId || !contextToken || !text) continue;
+
+      await upsertChatCandidate(env.DB, fromUserId, text);
+      if (!allowedUserId || fromUserId !== allowedUserId) continue;
 
       credentials.latestContextToken = contextToken;
       try {
