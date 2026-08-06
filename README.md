@@ -2,9 +2,9 @@
 
 部署在 Cloudflare Workers 上的微信 1 对 1 AI 机器人。它通过腾讯 iLink Bot API 收取消息，使用 Cloudflare Workers AI、DeepSeek 或 OpenAI 生成回复，并使用 D1 保存加密凭证、配置和独立的用户对话上下文。
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/YOUR_USERNAME/YOUR_REPO)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/qq2801476081-ops/wechat-ilink-ai-bot)
 
-> 部署按钮中的 `YOUR_USERNAME/YOUR_REPO` 是占位符。发布到 GitHub 后请替换为实际公开仓库地址。
+> 当前 Deploy 按钮指向公开仓库 `qq2801476081-ops/wechat-ilink-ai-bot`。
 
 ## 功能
 
