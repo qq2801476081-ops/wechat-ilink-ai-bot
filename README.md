@@ -200,13 +200,13 @@ npm audit
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
 | `ai_provider` | `workers-ai` | `workers-ai`、`deepseek` 或 `openai` |
-| `ai_model` | `@cf/meta/llama-3.1-8b-instruct` | 传给所选 AI 服务的模型名 |
+| `ai_model` | `@cf/meta/llama-3.1-8b-instruct-fp8` | 传给所选 AI 服务的模型名 |
 | `deepseek_api_key` | 无 | 加密存储，读取接口只返回“是否已配置” |
 | `openai_api_key` | 无 | 加密存储，读取接口只返回“是否已配置” |
 
 ### Workers AI 推荐模型
 
-- `@cf/meta/llama-3.1-8b-instruct`（默认，中文较好）
+- `@cf/meta/llama-3.1-8b-instruct-fp8`（默认，中文较好）
 - `@cf/meta/llama-3.3-70b-instruct-fp8-fast`（更强，但消耗更多额度）
 - `@cf/qwen/qwen1.5-14b-chat-awq`（中文特化）
 

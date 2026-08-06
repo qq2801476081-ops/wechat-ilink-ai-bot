@@ -2,7 +2,7 @@ import { decryptText, encryptText } from "./crypto";
 import { deleteConfigValue, getConfigValue, setConfigValue } from "./db";
 import type { AiProvider, Env, RuntimeConfig } from "./types";
 
-export const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct";
+export const DEFAULT_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
 export const DEFAULT_PROVIDER: AiProvider = "workers-ai";
 
 const PROVIDERS = new Set<AiProvider>(["workers-ai", "deepseek", "openai"]);

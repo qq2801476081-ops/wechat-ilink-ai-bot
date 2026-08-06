@@ -32,7 +32,7 @@ export const renderSetupPage = (): string => `<!doctype html>
           <label class="choice"><input type="radio" name="provider" value="openai"> OpenAI API</label>
         </div>
         <div class="grid">
-          <div class="field"><label for="model">模型名称</label><input id="model" value="@cf/meta/llama-3.1-8b-instruct" autocomplete="off"></div>
+          <div class="field"><label for="model">模型名称</label><input id="model" value="@cf/meta/llama-3.1-8b-instruct-fp8" autocomplete="off"></div>
           <div id="keyField" class="field" hidden><label id="keyLabel" for="apiKey">API Key</label><input id="apiKey" type="password" autocomplete="new-password" placeholder="留空则保持现有 Key"></div>
         </div>
         <div class="actions"><button id="saveConfig">保存配置</button><span id="configMessage" class="message"></span></div>
@@ -62,7 +62,7 @@ export const renderSetupPage = (): string => `<!doctype html>
       const provider = selectedProvider();
       $("keyField").hidden = provider === "workers-ai";
       $("keyLabel").textContent = provider === "deepseek" ? "DeepSeek API Key" : "OpenAI API Key";
-      if (provider === "workers-ai" && !$("model").value.startsWith("@cf/")) $("model").value = "@cf/meta/llama-3.1-8b-instruct";
+      if (provider === "workers-ai" && !$("model").value.startsWith("@cf/")) $("model").value = "@cf/meta/llama-3.1-8b-instruct-fp8";
       if (provider === "deepseek" && $("model").value.startsWith("@cf/")) $("model").value = "deepseek-chat";
       if (provider === "openai" && ($("model").value.startsWith("@cf/") || $("model").value === "deepseek-chat")) $("model").value = "gpt-4o-mini";
     }
