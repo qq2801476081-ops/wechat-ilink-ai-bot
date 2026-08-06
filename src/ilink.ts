@@ -49,10 +49,17 @@ const extractErrorMessage = (body: IlinkBaseResponse): string =>
   body.errmsg || body.err_msg || body.error || `iLink ret=${body.ret ?? 0} errcode=${body.errcode ?? 0}`;
 
 export class IlinkClient {
+  private readonly fetchImpl: typeof fetch;
+
   public constructor(
     private readonly baseUrl = DEFAULT_BASE_URL,
-    private readonly fetchImpl: typeof fetch = fetch
-  ) {}
+    fetchImpl: typeof fetch = globalThis.fetch
+  ) {
+    // Cloudflare Workers requires native fetch to be invoked with the global
+    // scope as its receiver. Calling a stored native function as an instance
+    // method makes `this` the IlinkClient and raises "Illegal invocation".
+    this.fetchImpl = fetchImpl.bind(globalThis);
+  }
 
   public async getBotQrcode(): Promise<{ key: string; content: string }> {
     const response = await this.request<{ qrcode: string; qrcode_img_content: string }>(

@@ -5,6 +5,16 @@ const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 describe("IlinkClient", () => {
+  it("invokes fetch with the global scope as receiver", async () => {
+    const fetchMock = vi.fn(function (this: unknown) {
+      if (this !== globalThis) throw new TypeError("Illegal invocation");
+      return Promise.resolve(jsonResponse({ qrcode: "key", qrcode_img_content: "content" }));
+    });
+
+    const client = new IlinkClient("https://ilink.test", fetchMock as unknown as typeof fetch);
+    await expect(client.getBotQrcode()).resolves.toEqual({ key: "key", content: "content" });
+  });
+
   it("uses verified headers and getupdates payload", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse({ ret: 0, get_updates_buf: "next", msgs: [] }));
