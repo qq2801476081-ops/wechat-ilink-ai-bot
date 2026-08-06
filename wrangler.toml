@@ -1,0 +1,21 @@
+name = "wechat-ilink-ai-bot"
+main = "src/index.ts"
+compatibility_date = "2026-08-06"
+
+[vars]
+ILINK_BASE_URL = "https://ilinkai.weixin.qq.com"
+
+[triggers]
+crons = ["* * * * *"]
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wechat-bot-db"
+database_id = "YOUR_DB_ID_HERE"
+
+# 部署前执行：wrangler secret put BOT_STATE_ENC_KEY
+# 可选：wrangler secret put DEEPSEEK_API_KEY
+# 可选：wrangler secret put OPENAI_API_KEY

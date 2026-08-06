@@ -1,0 +1,205 @@
+import { Hono } from "hono";
+import * as QRCode from "qrcode";
+import { generateAiReply } from "./ai";
+import { getPublicConfig, saveDynamicConfig } from "./config";
+import {
+  addConversationMessage,
+  ensureSchema,
+  getBotState,
+  getConversationHistory,
+  getLoginQr,
+  markBotLoggedOut,
+  saveBotCredentials,
+  saveLoginQr,
+  setBotError,
+  updateLoginQrStatus,
+  updatePollingState
+} from "./db";
+import { extractText, IlinkApiError, IlinkClient } from "./ilink";
+import { renderSetupPage } from "./setup.html.ts";
+import type { Env } from "./types";
+
+const toBase64 = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+};
+
+const renderQrDataUrl = async (content: string): Promise<string> => {
+  if (content.startsWith("data:image/")) return content;
+  const svg = await QRCode.toString(content, {
+    type: "svg",
+    margin: 1,
+    width: 320,
+    errorCorrectionLevel: "M",
+    color: { dark: "#17211b", light: "#ffffff" }
+  });
+  return `data:image/svg+xml;base64,${toBase64(new TextEncoder().encode(svg))}`;
+};
+
+const errorMessage = (error: unknown): string => error instanceof Error ? error.message : String(error);
+
+export const createApp = (): Hono<{ Bindings: Env }> => {
+  const app = new Hono<{ Bindings: Env }>();
+
+  app.use("*", async (c, next) => {
+    await ensureSchema(c.env.DB);
+    await next();
+  });
+
+  app.onError((error, c) => {
+    console.error("[http] request failed", error);
+    const status = error instanceof SyntaxError ? 400 : 500;
+    return c.json({ error: status === 400 ? "invalid_request" : "internal_error", message: errorMessage(error) }, status);
+  });
+
+  app.get("/", async (c) => {
+    const state = await getBotState(c.env.DB, c.env.BOT_STATE_ENC_KEY);
+    return c.html(`<!doctype html><meta charset="utf-8"><title>微信 AI 机器人</title><style>body{font:16px system-ui;max-width:680px;margin:60px auto;padding:0 20px;color:#17211b}a{color:#176b45}</style><h1>微信 AI 机器人</h1><p>状态：${state.isLoggedIn ? "已登录" : "未登录"}</p><p>上次轮询：${state.lastPollAt ?? "尚未轮询"}</p>${state.lastError ? `<p>最近错误：${state.lastError.replace(/[<>&]/g, "")}</p>` : ""}<p><a href="/setup">打开配置向导</a></p>`);
+  });
+
+  app.get("/setup", (c) => c.html(renderSetupPage(), 200, { "Cache-Control": "no-store" }));
+
+  app.get("/health", async (c) => {
+    const state = await getBotState(c.env.DB, c.env.BOT_STATE_ENC_KEY);
+    return c.json({ ok: true, loggedIn: state.isLoggedIn, lastPollAt: state.lastPollAt, updatedAt: state.updatedAt });
+  });
+
+  app.get("/api/config", async (c) => c.json(await getPublicConfig(c.env)));
+
+  app.post("/api/config", async (c) => {
+    const input = await c.req.json<{ key?: unknown; value?: unknown }>();
+    if (typeof input.key !== "string" || typeof input.value !== "string") {
+      return c.json({ error: "invalid_config", message: "Body 必须包含字符串 key 和 value" }, 400);
+    }
+    try {
+      await saveDynamicConfig(c.env, input.key, input.value);
+      return c.json({ ok: true });
+    } catch (error) {
+      return c.json({ error: "invalid_config", message: errorMessage(error) }, 400);
+    }
+  });
+
+  app.get("/api/login/qr", async (c) => {
+    const client = new IlinkClient(c.env.ILINK_BASE_URL);
+    const qr = await client.getBotQrcode();
+    const image = await renderQrDataUrl(qr.content);
+    await saveLoginQr(c.env.DB, { key: qr.key, image, status: "pending" });
+    return c.json({ key: qr.key, imgBase64: image });
+  });
+
+  app.get("/api/login/status", async (c) => {
+    const key = c.req.query("key")?.trim();
+    if (!key) return c.json({ error: "missing_key", message: "缺少二维码 key" }, 400);
+    const record = await getLoginQr(c.env.DB);
+    if (!record || record.key !== key) return c.json({ error: "qr_not_found", message: "二维码不存在或已被替换" }, 404);
+    if (record.status === "confirmed" || record.status === "expired") return c.json({ status: record.status });
+
+    const client = new IlinkClient(c.env.ILINK_BASE_URL);
+    const result = await client.getQrcodeStatus(key);
+    await updateLoginQrStatus(c.env.DB, result.status === "wait" ? "pending" : result.status);
+
+    if (result.status === "confirmed") {
+      if (!result.botToken || !result.accountId || !result.userId) {
+        throw new Error("iLink confirmed login without complete credentials");
+      }
+      await saveBotCredentials(c.env.DB, c.env.BOT_STATE_ENC_KEY, {
+        botToken: result.botToken,
+        accountId: result.accountId,
+        userId: result.userId,
+        baseUrl: result.baseUrl || c.env.ILINK_BASE_URL || "https://ilinkai.weixin.qq.com",
+        getUpdatesBuf: ""
+      });
+    }
+
+    return c.json({ status: result.status });
+  });
+
+  return app;
+};
+
+interface ScheduledClient {
+  getUpdates(token: string, buffer: string): Promise<{ buffer: string; messages: import("./ilink").IlinkMessage[] }>;
+  sendTyping(token: string, userId: string, contextToken: string): Promise<void>;
+  sendTextMessage(token: string, toUserId: string, text: string, contextToken: string): Promise<void>;
+}
+
+export interface ScheduledDependencies {
+  createClient(baseUrl: string): ScheduledClient;
+  generateReply(
+    env: Env,
+    history: Array<{ role: "user" | "assistant"; content: string }>,
+    userText: string
+  ): Promise<string>;
+}
+
+const defaultScheduledDependencies: ScheduledDependencies = {
+  createClient: (baseUrl) => new IlinkClient(baseUrl),
+  generateReply: generateAiReply
+};
+
+export const handleScheduled = async (
+  env: Env,
+  dependencies: ScheduledDependencies = defaultScheduledDependencies
+): Promise<void> => {
+  await ensureSchema(env.DB);
+  const state = await getBotState(env.DB, env.BOT_STATE_ENC_KEY);
+  if (!state.isLoggedIn || !state.credentials) return;
+
+  const credentials = { ...state.credentials };
+  const client = dependencies.createClient(credentials.baseUrl || env.ILINK_BASE_URL || "https://ilinkai.weixin.qq.com");
+
+  try {
+    const updates = await client.getUpdates(credentials.botToken, credentials.getUpdatesBuf);
+    credentials.getUpdatesBuf = updates.buffer;
+    await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
+
+    for (const message of updates.messages) {
+      if (message.message_type !== undefined && message.message_type !== 1) continue;
+      const fromUserId = message.from_user_id?.trim();
+      const contextToken = message.context_token?.trim();
+      const text = extractText(message).trim();
+      if (!fromUserId || !contextToken || !text) continue;
+
+      credentials.latestContextToken = contextToken;
+      try {
+        await client.sendTyping(credentials.botToken, fromUserId, contextToken);
+      } catch (error) {
+        if (error instanceof IlinkApiError && error.requiresLogin) throw error;
+        console.warn("[scheduled] sendtyping failed", errorMessage(error));
+      }
+
+      const history = await getConversationHistory(env.DB, fromUserId, 20);
+      let reply: string;
+      try {
+        reply = await dependencies.generateReply(env, history.map(({ role, content }) => ({ role, content })), text);
+      } catch (error) {
+        console.error("[scheduled] AI call failed", errorMessage(error));
+        reply = "抱歉，AI 暂时无法回复，请稍后再试。";
+      }
+
+      await addConversationMessage(env.DB, fromUserId, "user", text);
+      await addConversationMessage(env.DB, fromUserId, "assistant", reply);
+      await client.sendTextMessage(credentials.botToken, fromUserId, reply, contextToken);
+    }
+
+    await updatePollingState(env.DB, env.BOT_STATE_ENC_KEY, credentials);
+  } catch (error) {
+    const message = errorMessage(error);
+    if (error instanceof IlinkApiError && error.requiresLogin) {
+      await markBotLoggedOut(env.DB, message);
+      return;
+    }
+    await setBotError(env.DB, message);
+    throw error;
+  }
+};
+
+const app = createApp();
+
+export default {
+  fetch: app.fetch,
+  async scheduled(_controller, env): Promise<void> {
+    await handleScheduled(env);
+  }
+} satisfies ExportedHandler<Env>;
